@@ -1,0 +1,25 @@
+
+# Virtual environment
+venv/
+
+# Model files
+model/
+*.bin
+*.pt
+*.tar.gz
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.class
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IDE settings
+.vscode/
+.idea/
+
+# System files
+.DS_Store
+
