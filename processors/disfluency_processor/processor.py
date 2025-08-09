@@ -20,13 +20,9 @@ class DisfluencyProcessor:
         Args:
             model_path: Path to the trained model file (.pt)
         """
-        # Set device (MPS for Apple Silicon, CPU as fallback)
-        if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-            self.device = torch.device('mps')
-            print("Using MPS (Metal Performance Shaders) for acceleration")
-        else:
-            self.device = torch.device('cpu')
-            print("Using CPU (no GPU acceleration available)")
+        # Force using CPU to avoid MPS compatibility issues
+        self.device = torch.device("cpu")
+        print("Using CPU (MPS disabled due to compatibility issues)")  # (no GPU acceleration available)")
             
         # Load the model
         self.parser = self._load_model(model_path)
