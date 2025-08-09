@@ -1,0 +1,1 @@
+(S (EDITED (S (UNK we) (UNK don't))) (INTJ (UNK uh)) (PRN (S (NP (UNK I)) (VP (UNK mean)))) (NP (UNK a) (UNK lot)) (UNK of) (NP (UNK states)) (UNK don't) (VP (UNK have) (NP (UNK capital) (UNK punishment))))
