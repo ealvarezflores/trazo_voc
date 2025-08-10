@@ -461,15 +461,6 @@ def main():
         
         print(f"\nProcessing complete. Clean text written to {output_path}")
         
-        # Print a preview of the output
-        print("\nClean output preview:")
-        print("-" * 50)
-        preview = '\n'.join(clean_text.split('\n')[:5])  # Show first 5 lines
-        print(preview)
-        if len(clean_text.split('\n')) > 5:
-            print("..." + "\n" + f"({len(clean_text.split('\n')) - 5} more lines not shown)")
-        print("-" * 50)
-        
     except Exception as e:
         print(f"Error: {str(e)}")
         sys.exit(1)
