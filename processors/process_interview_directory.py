@@ -23,8 +23,10 @@ import sys
 import logging
 import re
 import tempfile
+import multiprocessing as mp
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
+from functools import partial
 
 # Set up logging
 logging.basicConfig(
@@ -195,6 +197,85 @@ def process_csv_for_speaker(
         logger.error(f"Error processing CSV for {speaker_type} file {fluent_file_path}: {e}")
         return False
 
+def process_file_worker(
+    args: Tuple[Path, Path, Path, bool, str]
+) -> Tuple[Path, bool, str]:
+    """
+    Worker function for parallel processing of a single file.
+    
+    Args:
+        args: Tuple containing (input_path, output_path, output_dir, process_interviewer, model_path)
+        
+    Returns:
+        Tuple of (input_path, success, error_message)
+    """
+    input_path, output_path, output_dir, process_interviewer, model_path = args
+    
+    try:
+        # Initialize processor in worker process
+        processor = DisfluencyProcessor(str(model_path))
+        
+        # Ensure output directory exists
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Read input file based on type
+        input_type = get_file_type(input_path)
+        print(f"Processing {input_type.upper()} file: {input_path.name}")
+        
+        if input_type == 'text':
+            text = read_text_file(input_path)
+        else:  # docx
+            text = read_docx_file(input_path)
+        
+        if not text.strip():
+            print(f"Warning: Skipping empty file: {input_path.name}")
+            return input_path, False, "Empty file"
+        
+        # Process text
+        clean_text = processor.process_text(text)
+        
+        # Clean up empty speaker sections
+        clean_text = cleanup_empty_speakers(clean_text)
+        
+        # Write output based on output file extension
+        output_type = get_file_type(output_path)
+        if output_type == 'text':
+            write_text_file(output_path, clean_text)
+        else:  # docx
+            write_docx_file(output_path, clean_text)
+        
+        # Separate speakers and save to respective directories
+        print(f"Separating speakers for: {output_path.name}")
+        separate_speakers(output_path, output_dir)
+        
+        # Process CSV for each speaker type
+        fluent_interviews_dir = output_dir / 'fluent_interviews'
+        
+        # Process interviewee files
+        interviewee_dir = fluent_interviews_dir / 'interviewee_fluent_interviews'
+        if interviewee_dir.exists():
+            for interviewee_file in interviewee_dir.glob(f"{output_path.stem}_interviewee.*"):
+                if interviewee_file.is_file():
+                    print(f"Processing CSV for interviewee file: {interviewee_file.name}")
+                    process_csv_for_speaker(interviewee_file, output_dir, 'interviewee', process_interviewer)
+        
+        # Process interviewer files (if requested)
+        if process_interviewer:
+            interviewer_dir = fluent_interviews_dir / 'interviewer_fluent_interviews'
+            if interviewer_dir.exists():
+                for interviewer_file in interviewer_dir.glob(f"{output_path.stem}_interviewer.*"):
+                    if interviewer_file.is_file():
+                        print(f"Processing CSV for interviewer file: {interviewer_file.name}")
+                        process_csv_for_speaker(interviewer_file, output_dir, 'interviewer', process_interviewer)
+        
+        print(f"Successfully processed: {input_path.name}")
+        return input_path, True, ""
+        
+    except Exception as e:
+        error_msg = f"Error processing {input_path.name}: {e}"
+        print(error_msg)
+        return input_path, False, error_msg
+
 def process_file(
     processor: DisfluencyProcessor,
     input_path: Path,
@@ -202,7 +283,7 @@ def process_file(
     output_dir: Path,
     process_interviewer: bool = False
 ) -> bool:
-    """Process a single file with the disfluency processor and CSV conversion."""
+    """Process a single file with the disfluency processor and CSV conversion (sequential version)."""
     try:
         # Ensure output directory exists
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -279,6 +360,10 @@ def main():
                        help='Path to the model file (default: joint-disfluency-detector-and-parser/best_models/swbd_fisher_bert_Edev.0.9078.pt)')
     parser.add_argument('--process-interviewer-to-csv', action='store_true',
                        help='Process interviewer files to CSV (default: only interviewee files are processed)')
+    parser.add_argument('--parallel', action='store_true',
+                       help='Use parallel processing (default: sequential processing)')
+    parser.add_argument('--workers', type=int, default=None,
+                       help='Number of worker processes for parallel processing (default: 50% of CPU cores)')
     
     args = parser.parse_args()
     
@@ -325,9 +410,20 @@ def main():
     else:
         logger.info("Only interviewee files will be processed to CSV")
     
-    # Process each file
-    success_count = 0
-    for i, input_file in enumerate(input_files, 1):
+    # Determine processing mode
+    if args.parallel:
+        logger.info("Using parallel processing")
+        if args.workers:
+            logger.info(f"Using {args.workers} worker processes")
+        else:
+            default_workers = max(1, mp.cpu_count() // 2)  # 50% of CPU cores, minimum 1
+            logger.info(f"Using {default_workers} worker processes (50% of CPU cores)")
+    else:
+        logger.info("Using sequential processing")
+    
+    # Prepare file processing tasks
+    processing_tasks = []
+    for input_file in input_files:
         # Skip directories
         if not input_file.is_file():
             continue
@@ -343,15 +439,67 @@ def main():
         # Ensure output directory exists
         output_file.parent.mkdir(parents=True, exist_ok=True)
         
-        logger.info(f"Processing file {i}/{len(input_files)}: {input_file.name}")
-        
-        # Process the file
-        if process_file(processor, input_file, output_file, output_dir, args.process_interviewer_to_csv):
-            success_count += 1
+        processing_tasks.append((input_file, output_file))
+    
+    # Process files
+    success_count = 0
+    failed_files = []
+    
+    if args.parallel:
+        # Parallel processing
+        try:
+            # Determine number of workers
+            num_workers = args.workers if args.workers else max(1, mp.cpu_count() // 2)
+            
+            # Prepare arguments for worker processes
+            worker_args = [
+                (input_file, output_file, output_dir, args.process_interviewer_to_csv, str(model_path))
+                for input_file, output_file in processing_tasks
+            ]
+            
+            # Process files in parallel
+            with mp.Pool(processes=num_workers) as pool:
+                results = pool.map(process_file_worker, worker_args)
+            
+            # Collect results
+            for input_path, success, error_msg in results:
+                if success:
+                    success_count += 1
+                    logger.info(f"✅ Successfully processed: {input_path.name}")
+                else:
+                    failed_files.append((input_path, error_msg))
+                    logger.error(f"❌ Failed to process: {input_path.name} - {error_msg}")
+                    
+        except Exception as e:
+            logger.error(f"Error in parallel processing: {e}")
+            logger.info("Falling back to sequential processing...")
+            
+            # Fallback to sequential processing
+            for input_file, output_file in processing_tasks:
+                logger.info(f"Processing file: {input_file.name}")
+                if process_file(processor, input_file, output_file, output_dir, args.process_interviewer_to_csv):
+                    success_count += 1
+                else:
+                    failed_files.append((input_file, "Sequential processing failed"))
+    else:
+        # Sequential processing
+        for i, (input_file, output_file) in enumerate(processing_tasks, 1):
+            logger.info(f"Processing file {i}/{len(processing_tasks)}: {input_file.name}")
+            
+            if process_file(processor, input_file, output_file, output_dir, args.process_interviewer_to_csv):
+                success_count += 1
+            else:
+                failed_files.append((input_file, "Sequential processing failed"))
     
     # Print summary
     logger.info(f"\nProcessing complete!")
     logger.info(f"Successfully processed {success_count} of {len(input_files)} files")
+    
+    if failed_files:
+        logger.warning(f"Failed to process {len(failed_files)} files:")
+        for failed_file, error_msg in failed_files:
+            logger.warning(f"  - {failed_file.name}: {error_msg}")
+    
     logger.info(f"Full fluent interviews saved to: {output_dir / 'fluent_interviews' / 'full_fluent_interviews'}")
     logger.info(f"Speaker-separated content saved to:")
     logger.info(f"  - {output_dir / 'fluent_interviews' / 'interviewer_fluent_interviews'}")
