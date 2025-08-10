@@ -328,11 +328,15 @@ class DisfluencyProcessor:
         if not text.strip():
             return ""
             
+        # Check if text is too long (more than 400 words to be safe)
+        words = text.split()
+        if len(words) > 400:
+            logger.info(f"Text too long ({len(words)} words), splitting into chunks")
+            return self._process_long_chunk(text)
+            
         try:
             logger.debug(f"Processing chunk: '{text[:100]}...'")
             
-            # Tokenize the chunk
-            words = text.split()
             if not words:
                 return ""
                 
@@ -364,6 +368,51 @@ class DisfluencyProcessor:
         except Exception as e:
             logger.error(f"Error processing chunk '{text[:50]}...': {e}", exc_info=True)
             return text
+    
+    def _process_long_chunk(self, text: str) -> str:
+        """Process a long chunk by splitting it into smaller pieces."""
+        # Split into sentences first
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        
+        # Process each sentence
+        processed_sentences = []
+        for sentence in sentences:
+            if sentence.strip():
+                # Check if individual sentence is still too long
+                sentence_words = sentence.split()
+                if len(sentence_words) > 400:
+                    # Split long sentence into word chunks
+                    logger.info(f"Sentence too long ({len(sentence_words)} words), splitting into word chunks")
+                    processed = self._process_very_long_sentence(sentence)
+                else:
+                    # Process each sentence individually
+                    processed = self._process_single_chunk(sentence.strip())
+                
+                if processed:
+                    processed_sentences.append(processed)
+        
+        return ' '.join(processed_sentences)
+    
+    def _process_very_long_sentence(self, sentence: str) -> str:
+        """Process a very long sentence by splitting into word chunks."""
+        words = sentence.split()
+        chunk_size = 300  # Safe chunk size
+        chunks = []
+        
+        for i in range(0, len(words), chunk_size):
+            chunk_words = words[i:i + chunk_size]
+            chunk_text = ' '.join(chunk_words)
+            
+            try:
+                # Process this chunk
+                processed_chunk = self._process_single_chunk(chunk_text)
+                if processed_chunk:
+                    chunks.append(processed_chunk)
+            except Exception as e:
+                logger.warning(f"Error processing word chunk: {e}")
+                chunks.append(chunk_text)  # Keep original if processing fails
+        
+        return ' '.join(chunks)
     
     def _preserve_basic_punctuation(self, original_text: str, clean_text: str) -> str:
         """Apply basic punctuation preservation to clean text."""
