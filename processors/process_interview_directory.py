@@ -3,10 +3,15 @@
 Batch Process Interviews
 
 This script processes all interview files in a directory using the disfluency processor,
-cleaning the text and saving the results to an output directory.
+cleaning the text and saving the results to organized subfolders.
+
+The processed files are saved to:
+- data/processed/fluent_interviews/full_fluent_interviews/ (complete interviews with disfluencies removed)
+- data/processed/fluent_interviews/interviewer_fluent_interviews/ (for future use)
+- data/processed/fluent_interviews/interviewee_fluent_interviews/ (for future use)
 
 Usage:
-    python batch_process_interviews.py [input_dir] [output_dir]
+    python process_interview_directory.py [input_dir] [output_dir]
 
 If no directories are provided, it will use the default data/raw and data/processed directories.
 """
@@ -148,9 +153,11 @@ def main():
         if not input_file.is_file():
             continue
             
-        # Determine output path
+        # Determine output path - save to full_fluent_interviews subfolder
         rel_path = input_file.relative_to(input_dir)
-        output_file = output_dir / rel_path.with_suffix('.cleaned.docx' if input_file.suffix == '.docx' else '.cleaned.txt')
+        # Create the full_fluent_interviews subfolder path
+        fluent_interviews_dir = output_dir / 'fluent_interviews' / 'full_fluent_interviews'
+        output_file = fluent_interviews_dir / rel_path.with_suffix('.cleaned.docx' if input_file.suffix == '.docx' else '.cleaned.txt')
         
         # Ensure output directory exists
         output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -164,7 +171,10 @@ def main():
     # Print summary
     logger.info(f"\nProcessing complete!")
     logger.info(f"Successfully processed {success_count} of {len(input_files)} files")
-    logger.info(f"Output saved to: {output_dir}")
+    logger.info(f"Full fluent interviews saved to: {output_dir / 'fluent_interviews' / 'full_fluent_interviews'}")
+    logger.info(f"Other subfolders available:")
+    logger.info(f"  - {output_dir / 'fluent_interviews' / 'interviewer_fluent_interviews'}")
+    logger.info(f"  - {output_dir / 'fluent_interviews' / 'interviewee_fluent_interviews'}")
 
 if __name__ == "__main__":
     main()

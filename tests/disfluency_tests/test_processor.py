@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 # Add the processors directory to the path
-sys.path.insert(0, str(Path(__file__).parent / "processors" / "disfluency_processor"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "processors" / "disfluency_processor"))
 
 from disfluency_processor import DisfluencyProcessor
 
@@ -12,7 +12,7 @@ def test_processor():
     """Test the improved disfluency processor."""
     
     # Initialize processor
-    model_path = Path(__file__).parent / 'joint-disfluency-detector-and-parser' / 'best_models' / 'swbd_fisher_bert_Edev.0.9078.pt'
+    model_path = Path(__file__).parent.parent.parent / 'joint-disfluency-detector-and-parser' / 'best_models' / 'swbd_fisher_bert_Edev.0.9078.pt'
     processor = DisfluencyProcessor(str(model_path))
     
     # Test with a simple sentence containing disfluencies
