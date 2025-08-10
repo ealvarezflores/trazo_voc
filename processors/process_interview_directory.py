@@ -7,8 +7,8 @@ cleaning the text and saving the results to organized subfolders.
 
 The processed files are saved to:
 - data/processed/fluent_interviews/full_fluent_interviews/ (complete interviews with disfluencies removed and empty speaker sections cleaned, files named with _fluent suffix)
-- data/processed/fluent_interviews/interviewer_fluent_interviews/ (for future use)
-- data/processed/fluent_interviews/interviewee_fluent_interviews/ (for future use)
+- data/processed/fluent_interviews/interviewer_fluent_interviews/ (interviewer-only content, files named with _interviewer suffix)
+- data/processed/fluent_interviews/interviewee_fluent_interviews/ (interviewee-only content, files named with _interviewee suffix)
 
 Usage:
     python process_interview_directory.py [input_dir] [output_dir]
@@ -44,6 +44,7 @@ try:
         write_text_file, write_docx_file
     )
     from processors.disfluency_processor.cleanup_empty_speakers import cleanup_empty_speakers
+    from processors.separate_speakers import process_file as separate_speakers
 except ImportError as e:
     logger.error(f"Failed to import disfluency processor: {e}")
     sys.exit(1)
@@ -55,7 +56,8 @@ def get_supported_extensions() -> List[str]:
 def process_file(
     processor: DisfluencyProcessor,
     input_path: Path,
-    output_path: Path
+    output_path: Path,
+    output_dir: Path
 ) -> bool:
     """Process a single file with the disfluency processor."""
     try:
@@ -87,6 +89,10 @@ def process_file(
             write_text_file(output_path, clean_text)
         else:  # docx
             write_docx_file(output_path, clean_text)
+        
+        # Separate speakers and save to respective directories
+        logger.info(f"Separating speakers for: {output_path.name}")
+        separate_speakers(output_path, output_dir)
         
         logger.info(f"Successfully processed: {input_path} -> {output_path}")
         return True
@@ -171,14 +177,14 @@ def main():
         logger.info(f"Processing file {i}/{len(input_files)}: {input_file.name}")
         
         # Process the file
-        if process_file(processor, input_file, output_file):
+        if process_file(processor, input_file, output_file, output_dir):
             success_count += 1
     
     # Print summary
     logger.info(f"\nProcessing complete!")
     logger.info(f"Successfully processed {success_count} of {len(input_files)} files")
     logger.info(f"Full fluent interviews saved to: {output_dir / 'fluent_interviews' / 'full_fluent_interviews'}")
-    logger.info(f"Other subfolders available:")
+    logger.info(f"Speaker-separated content saved to:")
     logger.info(f"  - {output_dir / 'fluent_interviews' / 'interviewer_fluent_interviews'}")
     logger.info(f"  - {output_dir / 'fluent_interviews' / 'interviewee_fluent_interviews'}")
 

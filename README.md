@@ -4,25 +4,40 @@ A powerful tool for processing and cleaning speech transcripts by removing disfl
 
 ## Features
 
-- Removes disfluencies, filler words, and speech artifacts
-- Preserves speaker tags (e.g., [Interviewer], [Interviewee])
-- Processes both TXT and DOCX file formats
-- Progress tracking for large files
-- Handles long transcripts with chunked processing
-- Maintains original formatting and speaker attribution
+- **Advanced Disfluency Detection**: Uses a state-of-the-art BERT-based model trained on the Penn Treebank-3 Switchboard corpus
+- **Intelligent Tag-Based Removal**: Removes disfluencies tagged as `EDITED`, `PRN`, `UH`, and `INTJ` nodes
+- **Speaker-Aware Processing**: Preserves speaker tags (e.g., [Interviewer], [Interviewee]) while cleaning content
+- **Multi-Format Support**: Processes both TXT and DOCX file formats
+- **Batch Processing**: Process entire directories of interview files automatically
+- **Smart Cleanup**: Automatically removes empty speaker sections after disfluency removal
+- **Progress Tracking**: Real-time progress updates for large files
+- **Punctuation Preservation**: Maintains original punctuation in non-disfluent parts of sentences
+- **Organized Output**: Saves processed files with `_fluent` suffix in structured directories
 
 ## Project Structure
 
 ```
 trazo_voc/
-├── data/                    # Data directory
-│   ├── raw/                 # Raw input files
-│   └── processed/           # Processed output files
-├── joint-disfluency-detector-and-parser/  # Disfluency detection model
-└── processors/              # Processing modules
-    └── disfluency_processor/
-        ├── disfluency_processor.py     # Main processor script
-        └── requirements.txt            # Python dependencies
+├── data/                                    # Data directory
+│   ├── raw/                                 # Raw input files
+│   └── processed/                           # Processed output files
+│       └── fluent_interviews/               # Organized output structure
+│           ├── full_fluent_interviews/      # Complete interviews with disfluencies removed
+│           ├── interviewer_fluent_interviews/ # Future: interviewer-only content
+│           └── interviewee_fluent_interviews/ # Future: interviewee-only content
+├── joint-disfluency-detector-and-parser/    # Disfluency detection model
+│   ├── best_models/                         # Pre-trained model files
+│   ├── src/                                 # Model source code
+│   └── model/                               # BERT model files
+├── processors/                              # Processing modules
+│   ├── disfluency_processor/                # Core disfluency processing
+│   │   ├── disfluency_processor.py          # Main processor script
+│   │   ├── cleanup_empty_speakers.py        # Empty speaker section cleanup
+│   │   └── requirements.txt                 # Python dependencies
+│   └── process_interview_directory.py       # Batch processing script
+├── tests/                                   # Test files
+│   └── disfluency_tests/                    # Disfluency processing tests
+└── venv/                                    # Virtual environment
 ```
 
 ## Prerequisites
@@ -59,47 +74,79 @@ trazo_voc/
    make download-model
    ```
 
+4. **Test the installation**:
+   ```bash
+   # Run a simple test
+   python3 tests/disfluency_tests/test_simple.py
+   ```
+
 ## Usage
 
-### Basic Usage
+### Single File Processing
 
-Process a text file and save the output:
+Process a single text file and save the output:
 ```bash
-python -m processors.disfluency_processor.disfluency_processor input.txt output.txt
+python3 processors/disfluency_processor/disfluency_processor.py input.txt output.txt
 ```
+
+### Batch Processing (Recommended)
+
+Process all files in a directory:
+```bash
+python3 processors/process_interview_directory.py data/raw data/processed
+```
+
+This will:
+- Process all `.txt` and `.docx` files in `data/raw/`
+- Save cleaned files to `data/processed/fluent_interviews/full_fluent_interviews/`
+- Automatically remove empty speaker sections
+- Use `_fluent` suffix for output files
+- **Automatically separate speakers** into interviewer and interviewee files
 
 ### Command Line Options
 
-```
-usage: disfluency_processor.py [-h] [--format {txt,docx}] [--debug] input_file [output_file]
+#### Single File Processing
+```bash
+usage: disfluency_processor.py [-h] input_file [output_file]
 
 Process transcript text to remove disfluencies.
 
 positional arguments:
   input_file           Path to the input text file
-  output_file          Path to save the processed output (default: input_file.cleaned.txt)
+  output_file          Path to save the processed output (default: input_file.cleaned.docx)
 
 options:
   -h, --help           show this help message and exit
-  --format {txt,docx}  Output format (default: txt)
-  --debug              Enable debug logging
+```
+
+#### Batch Processing
+```bash
+usage: process_interview_directory.py [-h] [input_dir] [output_dir] [--ext EXTENSIONS] [--model MODEL_PATH]
+
+Process multiple interview files with disfluency removal.
+
+positional arguments:
+  input_dir            Directory containing input files (default: data/raw)
+  output_dir           Directory to save processed files (default: data/processed)
+  --ext EXTENSIONS     File extensions to process (default: .txt .docx)
+  --model MODEL_PATH   Path to the model file
 ```
 
 ### Examples
 
-1. **Process a text file**:
+1. **Process a single file**:
    ```bash
-   python -m processors.disfluency_processor.disfluency_processor data/raw/interview.txt data/processed/clean_interview.txt
+   python3 processors/disfluency_processor/disfluency_processor.py data/raw/interview.txt data/processed/clean_interview.txt
    ```
 
-2. **Process and save as DOCX**:
+2. **Process all files in a directory**:
    ```bash
-   python -m processors.disfluency_processor.disfluency_processor data/raw/meeting_notes.txt --format docx
+   python3 processors/process_interview_directory.py data/raw data/processed
    ```
 
-3. **Process with debug logging**:
+3. **Process only text files**:
    ```bash
-   python -m processors.disfluency_processor.disfluency_processor input.txt --debug
+   python3 processors/process_interview_directory.py data/raw data/processed --ext .txt
    ```
 
 ## Input Format
@@ -120,6 +167,17 @@ The processor will output clean text with disfluencies removed while preserving 
 [Interviewee] I've been working in tech for about ten years now.
 ```
 
+### Output Structure
+
+Processed files are saved with the following structure:
+- **File naming**: Original filename with `_fluent` suffix (e.g., `interview.txt` → `interview_fluent.txt`)
+- **Directory structure**: 
+  - `data/processed/fluent_interviews/full_fluent_interviews/` (complete interviews)
+  - `data/processed/fluent_interviews/interviewer_fluent_interviews/` (interviewer-only content with `_interviewer` suffix)
+  - `data/processed/fluent_interviews/interviewee_fluent_interviews/` (interviewee-only content with `_interviewee` suffix)
+- **Empty speaker cleanup**: Automatically removes speaker sections that become empty after disfluency removal
+- **Speaker separation**: Automatically separates content by speaker type for focused analysis
+
 ## Advanced Usage
 
 ### Processing Large Files
@@ -131,11 +189,33 @@ Progress: 50% complete (50/100 sections)
 Progress: 100% complete
 ```
 
+### Disfluency Detection Types
+
+The model identifies and removes several types of disfluencies:
+- **`EDITED`**: Speech repairs (reparandum, interregnum, repair)
+- **`INTJ`**: Interjections (e.g., "um", "uh", "yeah", "right", "yes")
+- **`PRN`**: Parenthetical asides (e.g., "you know", "I mean")
+- **`UH`**: Filled pauses and hesitation markers
+
+### Testing
+
+Run the test suite to verify functionality:
+```bash
+# Test basic disfluency detection
+python3 tests/disfluency_tests/test_simple.py
+
+# Test punctuation preservation
+python3 tests/disfluency_tests/test_punctuation.py
+
+# Test full processor pipeline
+python3 tests/disfluency_tests/test_processor.py
+```
+
 ### Integration with Other Tools
 You can pipe the output to other command-line tools:
 
 ```bash
-python -m processors.disfluency_processor.disfluency_processor input.txt - | grep -i "keyword"
+python3 processors/disfluency_processor/disfluency_processor.py input.txt - | grep -i "keyword"
 ```
 
 ## Troubleshooting
@@ -143,10 +223,30 @@ python -m processors.disfluency_processor.disfluency_processor input.txt - | gre
 - **Memory Issues**: For very large files, you might need to increase Python's memory limits
 - **Model Loading Errors**: Ensure you've run `make download-model` to download the required model files
 - **Build Errors**: Make sure you have all build dependencies installed (gcc, python3-dev)
+- **MPS Compatibility**: The processor automatically uses CPU mode to avoid MPS compatibility issues on Apple Silicon
+- **Empty Output**: If processing results in empty files, check that the input text contains speaker tags in the expected format
+- **BERT Model Path**: If you encounter BERT model loading issues, ensure the model files are in `joint-disfluency-detector-and-parser/model/`
 
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Technical Details
+
+### Model Architecture
+- **Base Model**: BERT (Bidirectional Encoder Representations from Transformers)
+- **Training Data**: Penn Treebank-3 Switchboard corpus
+- **Architecture**: Constituency parsing with disfluency detection
+- **Framework**: PyTorch
+
+### Processing Pipeline
+1. **Text Input**: Raw interview text with speaker tags
+2. **Speaker Sectioning**: Splits text by speaker sections
+3. **Disfluency Detection**: Parses text to identify disfluency nodes
+4. **Content Extraction**: Removes disfluent segments while preserving fluent content
+5. **Punctuation Preservation**: Maintains original punctuation in cleaned text
+6. **Empty Speaker Cleanup**: Removes speaker sections that become empty
+7. **Output**: Clean, fluent text with organized file structure
 
 ## Acknowledgments
 
