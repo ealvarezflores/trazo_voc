@@ -281,9 +281,9 @@ class DisfluencyProcessor:
         if not text.strip():
             return ""
         
-        # Instead of splitting into sentences, process larger chunks
-        # This allows the model to see the full context for disfluency detection
-        clean_text = self._process_large_chunk(text)
+        # Process the text directly without chunking for better disfluency detection
+        # The model works better with complete sentences/paragraphs
+        clean_text = self._process_single_chunk(text)
         
         return clean_text
     
@@ -300,9 +300,9 @@ class DisfluencyProcessor:
             if not words:
                 return ""
                 
-            # If the text is too long, split it into manageable chunks
-            # but keep chunks larger than individual sentences
-            max_words_per_chunk = 100  # Increased from sentence-level to chunk-level
+            # Use smaller chunks for better disfluency detection
+            # The model works better with more context but not too much
+            max_words_per_chunk = 30  # Smaller chunks for better disfluency detection
             
             if len(words) <= max_words_per_chunk:
                 # Process the entire text as one chunk
@@ -553,11 +553,11 @@ class DisfluencyProcessor:
                     logger.debug(f"Processing content: '{content[:100]}...")
                     processed_content = self._process_text_section(content)
                     
-                    # Always include the section, even if processing returned empty
+                    # Always include the section, but prefer processed content
                     if speaker:
-                        processed_sections.append(f"{speaker}\n{processed_content if processed_content else content}")
+                        processed_sections.append(f"{speaker}\n{processed_content}")
                     else:
-                        processed_sections.append(processed_content if processed_content else content)
+                        processed_sections.append(processed_content)
                         
                 except Exception as e:
                     logger.error(f"Error processing section: {e}", exc_info=True)

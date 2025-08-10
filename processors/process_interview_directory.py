@@ -6,7 +6,7 @@ This script processes all interview files in a directory using the disfluency pr
 cleaning the text and saving the results to organized subfolders.
 
 The processed files are saved to:
-- data/processed/fluent_interviews/full_fluent_interviews/ (complete interviews with disfluencies removed)
+- data/processed/fluent_interviews/full_fluent_interviews/ (complete interviews with disfluencies removed, files named with _fluent suffix)
 - data/processed/fluent_interviews/interviewer_fluent_interviews/ (for future use)
 - data/processed/fluent_interviews/interviewee_fluent_interviews/ (for future use)
 
@@ -157,7 +157,9 @@ def main():
         rel_path = input_file.relative_to(input_dir)
         # Create the full_fluent_interviews subfolder path
         fluent_interviews_dir = output_dir / 'fluent_interviews' / 'full_fluent_interviews'
-        output_file = fluent_interviews_dir / rel_path.with_suffix('.cleaned.docx' if input_file.suffix == '.docx' else '.cleaned.txt')
+        # Use _fluent suffix instead of .cleaned
+        base_name = rel_path.stem
+        output_file = fluent_interviews_dir / f"{base_name}_fluent{rel_path.suffix}"
         
         # Ensure output directory exists
         output_file.parent.mkdir(parents=True, exist_ok=True)
