@@ -60,18 +60,29 @@ class DisfluencyProcessor:
         """
         print(f"Loading model from {model_path}...")
         
-        # Load model info (on CPU first) with weights_only=False for compatibility
-        # Note: Setting weights_only=False is required for this model but be cautious with untrusted files
-        info = torch.load(model_path, map_location='cpu', weights_only=False)
+        # Change to the joint-disfluency-detector-and-parser directory where BERT files are located
+        original_cwd = os.getcwd()
+        model_dir = Path(model_path).parent.parent / 'model'
+        if model_dir.exists():
+            os.chdir(str(model_dir))
+            print(f"Changed working directory to: {os.getcwd()}")
         
-        # Initialize model using from_spec (handles device placement internally)
-        parser = NKChartParser.from_spec(info['spec'], info['state_dict'])
-        
-        # Move model to the appropriate device
-        parser = parser.to(self.device)
-        print(f"Model loaded on device: {next(parser.parameters()).device}")
-        
-        return parser
+        try:
+            # Load model info (on CPU first) with weights_only=False for compatibility
+            # Note: Setting weights_only=False is required for this model but be cautious with untrusted files
+            info = torch.load(model_path, map_location='cpu', weights_only=False)
+            
+            # Initialize model using from_spec (handles device placement internally)
+            parser = NKChartParser.from_spec(info['spec'], info['state_dict'])
+            
+            # Move model to the appropriate device
+            parser = parser.to(self.device)
+            print(f"Model loaded on device: {next(parser.parameters()).device}")
+            
+            return parser
+        finally:
+            # Restore original working directory
+            os.chdir(original_cwd)
     
     def _is_disfluent_node(self, node: InternalTreebankNode) -> bool:
         """Check if a node is a disfluency node (EDITED, PRN, UH, etc.)"""
@@ -118,6 +129,7 @@ class DisfluencyProcessor:
             
         # Skip disfluent nodes
         if self._is_disfluent_node(node):
+            logger.debug(f"Skipping disfluent node: {node.label}")
             return ""
             
         # Process children and join their text
@@ -127,7 +139,9 @@ class DisfluencyProcessor:
             if child_text:
                 parts.append(child_text)
                 
-        return " ".join(parts)
+        result = " ".join(parts)
+        logger.debug(f"Extracted text from {node.label}: '{result}'")
+        return result
     
     def _process_speaker_sections(self, text: str) -> Generator[Tuple[str, str], None, None]:
         """
@@ -185,34 +199,74 @@ class DisfluencyProcessor:
                         yield "", after_text
     
     def _split_into_sentences(self, text: str) -> List[str]:
-        """Split text into sentences while preserving speaker tags and formatting."""
+        """Split text into sentences while preserving speaker tags and formatting.
+        This improved version groups related content to better handle disfluencies."""
         if not text.strip():
             return []
             
-        # First, split by sentence-ending punctuation followed by whitespace
-        sentences = []
-        current_sentence = []
+        # Clean up the text first
+        text = text.strip()
         
-        # Split on sentence boundaries but be careful with abbreviations
-        for part in re.split(r'(?<=[.!?])\s+', text):
+        # Split by periods, but be smarter about it
+        # We want to group related content together for better disfluency detection
+        sentences = []
+        
+        # Split by periods, but don't split on abbreviations
+        parts = re.split(r'(?<=[.!?])\s+', text)
+        
+        current_sentence_parts = []
+        for part in parts:
             if not part.strip():
                 continue
                 
             # Check if this looks like the start of a new sentence
-            if (current_sentence and 
+            # (capitalized and not an abbreviation)
+            if (current_sentence_parts and 
                 len(part) > 1 and 
                 part[0].isupper() and 
-                not any(part.lower().startswith(abbr) for abbr in ['mr.', 'mrs.', 'ms.', 'dr.', 'prof.'])):
-                if current_sentence:
-                    sentences.append(' '.join(current_sentence).strip())
-                    current_sentence = []
+                not any(part.lower().startswith(abbr) for abbr in ['mr.', 'mrs.', 'ms.', 'dr.', 'prof.', 'inc.', 'ltd.', 'co.', 'corp.'])):
+                
+                # Join current sentence parts
+                if current_sentence_parts:
+                    sentence = ' '.join(current_sentence_parts).strip()
+                    if sentence:
+                        sentences.append(sentence)
+                    current_sentence_parts = []
                     
-            current_sentence.append(part)
+            current_sentence_parts.append(part)
         
         # Add the last sentence
-        if current_sentence:
-            sentences.append(' '.join(current_sentence).strip())
+        if current_sentence_parts:
+            sentence = ' '.join(current_sentence_parts).strip()
+            if sentence:
+                sentences.append(sentence)
+        
+        # If we have very short sentences, try to combine them for better disfluency detection
+        if len(sentences) > 1:
+            combined_sentences = []
+            current_combined = []
             
+            for sentence in sentences:
+                words = sentence.split()
+                
+                # If sentence is very short (less than 5 words), consider combining it
+                if len(words) < 5 and current_combined:
+                    current_combined.append(sentence)
+                else:
+                    # If we have accumulated sentences, join them
+                    if current_combined:
+                        combined_sentences.append(' '.join(current_combined))
+                        current_combined = []
+                    current_combined = [sentence]
+            
+            # Add any remaining combined sentences
+            if current_combined:
+                combined_sentences.append(' '.join(current_combined))
+            
+            # Only use combined sentences if we actually combined some
+            if len(combined_sentences) < len(sentences):
+                sentences = combined_sentences
+        
         return sentences
     
     def _process_text_section(self, text: str) -> str:
@@ -226,20 +280,171 @@ class DisfluencyProcessor:
         """
         if not text.strip():
             return ""
+        
+        # Instead of splitting into sentences, process larger chunks
+        # This allows the model to see the full context for disfluency detection
+        clean_text = self._process_large_chunk(text)
+        
+        return clean_text
+    
+    def _process_large_chunk(self, text: str) -> str:
+        """Process a large chunk of text to remove disfluencies."""
+        if not text.strip():
+            return ""
             
-        # Split into sentences using our custom splitter
-        sentences = self._split_into_sentences(text)
-        if not sentences:
+        try:
+            logger.debug(f"Processing large chunk: '{text[:100]}...'")
+            
+            # Tokenize the text
+            words = text.split()
+            if not words:
+                return ""
+                
+            # If the text is too long, split it into manageable chunks
+            # but keep chunks larger than individual sentences
+            max_words_per_chunk = 100  # Increased from sentence-level to chunk-level
+            
+            if len(words) <= max_words_per_chunk:
+                # Process the entire text as one chunk
+                return self._process_single_chunk(text)
+            else:
+                # Split into chunks and process each
+                chunks = []
+                for i in range(0, len(words), max_words_per_chunk):
+                    chunk_words = words[i:i + max_words_per_chunk]
+                    chunk_text = " ".join(chunk_words)
+                    processed_chunk = self._process_single_chunk(chunk_text)
+                    if processed_chunk:
+                        chunks.append(processed_chunk)
+                
+                return " ".join(chunks)
+                
+        except Exception as e:
+            logger.error(f"Error processing large chunk: {e}", exc_info=True)
+            return text
+    
+    def _process_single_chunk(self, text: str) -> str:
+        """Process a single chunk of text through the disfluency model."""
+        if not text.strip():
+            return ""
+            
+        try:
+            logger.debug(f"Processing chunk: '{text[:100]}...'")
+            
+            # Tokenize the chunk
+            words = text.split()
+            if not words:
+                return ""
+                
+            # Prepare input with dummy tags
+            tagged_sentence = [(self.dummy_tag, word) for word in words]
+            
+            # Process through the model
+            with torch.no_grad():
+                parsed_trees, _ = self.parser.parse_batch([tagged_sentence])
+            
+            if not parsed_trees or parsed_trees[0] is None:
+                logger.warning(f"No parse tree generated for chunk: '{text[:50]}...'")
+                return text
+                
+            treebank_tree = parsed_trees[0].convert()
+            
+            # Use the simple extraction method that works well
+            clean_text = self._extract_clean_text(treebank_tree).strip()
+            
+            if clean_text:
+                # Apply basic punctuation preservation
+                result = self._preserve_basic_punctuation(text, clean_text)
+                logger.debug(f"Processed chunk. Original: '{text[:50]}...' -> Clean: '{result[:50]}...'")
+                return result
+                
+            logger.debug(f"No clean text extracted from chunk: '{text[:50]}...'")
+            return ""
+            
+        except Exception as e:
+            logger.error(f"Error processing chunk '{text[:50]}...': {e}", exc_info=True)
+            return text
+    
+    def _preserve_basic_punctuation(self, original_text: str, clean_text: str) -> str:
+        """Apply basic punctuation preservation to clean text."""
+        # Split both texts into words
+        original_words = original_text.split()
+        clean_words = clean_text.split()
+        
+        # Create a mapping from clean words to original words with punctuation
+        word_mapping = {}
+        clean_index = 0
+        
+        for orig_word in original_words:
+            # Clean the original word for comparison
+            clean_orig = re.sub(r'[^\w]', '', orig_word.lower())
+            if clean_orig and clean_index < len(clean_words):
+                clean_compare = re.sub(r'[^\w]', '', clean_words[clean_index].lower())
+                if clean_orig == clean_compare:
+                    word_mapping[clean_words[clean_index]] = orig_word
+                    clean_index += 1
+        
+        # Reconstruct the text with original punctuation
+        result_words = []
+        for clean_word in clean_words:
+            if clean_word in word_mapping:
+                result_words.append(word_mapping[clean_word])
+            else:
+                result_words.append(clean_word)
+        
+        return ' '.join(result_words)
+    
+    def _extract_clean_text_with_punctuation(self, original_text: str, tree: InternalTreebankNode) -> str:
+        """Extract clean text while preserving punctuation from the original text."""
+        # Get the list of words that should be kept (non-disfluent)
+        clean_words = self._get_clean_words(tree)
+        
+        if not clean_words:
             return ""
         
-        # Process each sentence individually
-        clean_sentences = []
-        for sentence in sentences:
-            processed = self._process_single_sentence(sentence)
-            if processed:
-                clean_sentences.append(processed)
+        # Create a mapping of word positions to determine which words to keep
+        original_words = original_text.split()
+        word_positions = []
         
-        return " ".join(clean_sentences)
+        # Find the positions of clean words in the original text
+        clean_word_index = 0
+        for i, word in enumerate(original_words):
+            # Clean the word for comparison (remove punctuation)
+            clean_word = re.sub(r'[^\w]', '', word.lower())
+            if clean_word and clean_word_index < len(clean_words):
+                clean_compare = re.sub(r'[^\w]', '', clean_words[clean_word_index].lower())
+                if clean_word == clean_compare:
+                    word_positions.append(i)
+                    clean_word_index += 1
+        
+        # Reconstruct the text with preserved punctuation
+        result_parts = []
+        for i, word in enumerate(original_words):
+            if i in word_positions:
+                result_parts.append(word)
+            elif i > 0 and i-1 in word_positions:
+                # Keep punctuation that follows clean words
+                result_parts.append(word)
+        
+        return ' '.join(result_parts).strip()
+    
+    def _get_clean_words(self, node: InternalTreebankNode) -> List[str]:
+        """Get the list of clean words (non-disfluent) from the tree."""
+        if isinstance(node, LeafTreebankNode):
+            return [node.word]
+            
+        # Skip disfluent nodes
+        if self._is_disfluent_node(node):
+            logger.debug(f"Skipping disfluent node: {node.label}")
+            return []
+            
+        # Process children and collect their words
+        words = []
+        for child in node.children:
+            child_words = self._get_clean_words(child)
+            words.extend(child_words)
+            
+        return words
     
     def _process_single_sentence(self, sentence: str) -> str:
         """Process a single sentence through the disfluency model."""
@@ -269,10 +474,19 @@ class DisfluencyProcessor:
                 return sentence
                 
             treebank_tree = parsed_trees[0].convert()
+            
+            # Debug: Print the tree structure for short sentences
+            if len(words) < 20:
+                logger.debug(f"Tree structure for sentence: {treebank_tree}")
+            
             clean_text = self._extract_clean_text(treebank_tree).strip()
             
             if clean_text:
-                result = clean_text[0].upper() + clean_text[1:]
+                # Ensure proper capitalization
+                if clean_text and clean_text[0].isalpha():
+                    result = clean_text[0].upper() + clean_text[1:]
+                else:
+                    result = clean_text
                 logger.debug(f"Processed sentence. Original: '{sentence}' -> Clean: '{result}'")
                 return result
                 
@@ -416,12 +630,12 @@ def main():
     
     # Get input and output file paths from command line arguments or use defaults
     if len(sys.argv) > 1:
-        input_path = Path(sys.argv[1])
+        input_path = Path(sys.argv[1]).resolve()  # Convert to absolute path
     else:
         input_path = base_dir / 'data' / 'raw' / 'input.txt'
     
     if len(sys.argv) > 2:
-        output_path = Path(sys.argv[2])
+        output_path = Path(sys.argv[2]).resolve()  # Convert to absolute path
     else:
         # Always use .docx as the default output format
         output_path = input_path.with_stem(f"{input_path.stem}.cleaned").with_suffix('.docx')
