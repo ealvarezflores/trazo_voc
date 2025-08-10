@@ -6,7 +6,7 @@ This script processes all interview files in a directory using the disfluency pr
 cleaning the text and saving the results to organized subfolders.
 
 The processed files are saved to:
-- data/processed/fluent_interviews/full_fluent_interviews/ (complete interviews with disfluencies removed, files named with _fluent suffix)
+- data/processed/fluent_interviews/full_fluent_interviews/ (complete interviews with disfluencies removed and empty speaker sections cleaned, files named with _fluent suffix)
 - data/processed/fluent_interviews/interviewer_fluent_interviews/ (for future use)
 - data/processed/fluent_interviews/interviewee_fluent_interviews/ (for future use)
 
@@ -43,6 +43,7 @@ try:
         get_file_type, read_text_file, read_docx_file, 
         write_text_file, write_docx_file
     )
+    from processors.disfluency_processor.cleanup_empty_speakers import cleanup_empty_speakers
 except ImportError as e:
     logger.error(f"Failed to import disfluency processor: {e}")
     sys.exit(1)
@@ -76,6 +77,9 @@ def process_file(
         
         # Process text
         clean_text = processor.process_text(text)
+        
+        # Clean up empty speaker sections
+        clean_text = cleanup_empty_speakers(clean_text)
         
         # Write output based on output file extension
         output_type = get_file_type(output_path)
